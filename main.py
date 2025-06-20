@@ -6,15 +6,26 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, 
                              QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
                              QGroupBox, QFormLayout, QProgressBar, QSplitter, QComboBox)
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtGui import QColor
 import qtawesome as qta
 import datetime
+import json
+import tempfile
 
 class MockupRenderer(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Mockup Renderer")
-        self.resize(1200, 650)  # Wider to accommodate both tables
+        self.resize(1200, 650)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        
+        self.processing = False
+        self.current_psd_index = -1
+        self.current_design_index = -1
+        self.psd_files = []
+        self.design_files = []
+        
         self.setup_ui()
         
     def setup_ui(self):
@@ -141,6 +152,7 @@ class MockupRenderer(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%v% - %p%")
         progress_layout.addWidget(self.progress_bar)
         
         self.progress_label = QLabel("Siap untuk memproses")
@@ -152,14 +164,36 @@ class MockupRenderer(QWidget):
         # Tombol render mockup
         button_layout = QHBoxLayout()
         open_icon = qta.icon('fa6s.images', color='#2ecc71')
-        self.open_button = QPushButton(open_icon, " Render Mockup")
-        self.open_button.clicked.connect(self.open_path_in_photoshop)
-        button_layout.addWidget(self.open_button)
+        self.render_button = QPushButton(open_icon, " Render Mockup")
+        self.render_button.clicked.connect(self.start_rendering)
+        button_layout.addWidget(self.render_button)
+        
+        # Tombol cancel
+        cancel_icon = qta.icon('fa6s.xmark', color='#e74c3c')
+        self.cancel_button = QPushButton(cancel_icon, " Batal")
+        self.cancel_button.clicked.connect(self.cancel_rendering)
+        self.cancel_button.setEnabled(False)
+        button_layout.addWidget(self.cancel_button)
         
         main_layout.addLayout(button_layout)
         
         self.setLayout(main_layout)
-    
+        
+        # Timer untuk proses rendering
+        self.render_timer = QTimer()
+        self.render_timer.timeout.connect(self.process_rendering)
+        
+        # Timer untuk polling status
+        self.status_timer = QTimer()
+        self.status_timer.timeout.connect(self.check_process_status)
+        self.status_timer.setInterval(500)  # Check every 0.5 second
+        
+        # Tracking number per PSD
+        self.output_counters = {}
+        
+        # Warna highlight kuning transparan
+        self.highlight_color = QColor(255, 255, 0, 13)  # RGBA with 0.05 alpha
+        
     def browse_directory(self):
         directory = QFileDialog.getExistingDirectory(self, "Pilih Folder Sumber")
         if directory:
@@ -204,6 +238,7 @@ class MockupRenderer(QWidget):
             
             # Sort by name
             design_files.sort(key=lambda x: x["name"])
+            self.design_files = design_files
             
             # Add files to table
             self.design_table.setRowCount(len(design_files))
@@ -242,6 +277,7 @@ class MockupRenderer(QWidget):
             
             # Sort by name
             psd_files.sort(key=lambda x: x["name"])
+            self.psd_files = psd_files
             
             # Add files to table
             self.file_table.setRowCount(len(psd_files))
@@ -255,74 +291,461 @@ class MockupRenderer(QWidget):
         except Exception as e:
             self.info_label.setText(f"Error: {str(e)}")
     
-    def open_path_in_photoshop(self):
-        path = self.path_input.text().strip()
-        if not path:
-            QMessageBox.warning(self, "Peringatan", "Mohon masukkan lokasi folder mockup terlebih dahulu.")
+    def validate_inputs(self):
+        mockup_dir = self.path_input.text().strip()
+        if not mockup_dir or not os.path.exists(mockup_dir):
+            QMessageBox.warning(self, "Peringatan", "Folder sumber mockup tidak ditemukan.")
+            return False
+            
+        if not self.psd_files:
+            QMessageBox.warning(self, "Peringatan", "Tidak ada file mockup (.psd) ditemukan di folder sumber.")
+            return False
+        
+        design_dir = self.design_dir_input.text().strip()
+        if not design_dir or not os.path.exists(design_dir):
+            QMessageBox.warning(self, "Peringatan", "Folder desain tidak ditemukan.")
+            return False
+            
+        if not self.design_files:
+            QMessageBox.warning(self, "Peringatan", "Tidak ada file desain ditemukan di folder desain.")
+            return False
+            
+        smart_object_name = self.smart_object_input.text().strip()
+        if not smart_object_name:
+            QMessageBox.warning(self, "Peringatan", "Nama smart object tidak boleh kosong.")
+            return False
+            
+        output_dir = self.output_dir_input.text().strip()
+        if not output_dir:
+            QMessageBox.warning(self, "Peringatan", "Folder output belum ditentukan.")
+            return False
+            
+        # Pastikan folder output ada, buat jika belum ada
+        if not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Gagal membuat folder output: {str(e)}")
+                return False
+                
+        return True
+    
+    def start_rendering(self):
+        if self.processing:
             return
             
-        if not os.path.exists(path):
-            QMessageBox.warning(self, "Peringatan", "Folder mockup tidak valid atau tidak ditemukan.")
+        if not self.validate_inputs():
             return
             
+        self.processing = True
+        self.render_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        
+        # Reset indices
+        self.current_psd_index = -1
+        self.current_design_index = -1
+        
+        # Reset output counters
+        self.output_counters = {}
+        
+        # Calculate total operations for progress bar
+        total_psd_files = len(self.psd_files)
+        total_design_files = len(self.design_files)
+        total_operations = total_psd_files * total_design_files
+        self.total_operations = total_operations
+        self.completed_operations = 0
+        
+        # Update progress
+        self.update_progress(0, "Memulai proses rendering...")
+        
+        # Start rendering process
+        self.render_timer.start(100)  # Start with a small delay
+    
+    def cancel_rendering(self):
+        if not self.processing:
+            return
+            
+        self.processing = False
+        self.render_timer.stop()
+        self.status_timer.stop()
+        
+        # Kill any active Photoshop script
+        self.terminate_photoshop_script()
+        
+        # Reset UI
+        self.render_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Proses dibatalkan")
+        
+        # Reset row highlights
+        self.reset_table_highlights()
+    
+    def reset_table_highlights(self):
+        # Reset tables by removing all background colors
+        for row in range(self.file_table.rowCount()):
+            for col in range(self.file_table.columnCount()):
+                item = self.file_table.item(row, col)
+                if item:
+                    item.setBackground(QColor(0, 0, 0, 0))  # Transparent background
+        
+        for row in range(self.design_table.rowCount()):
+            for col in range(self.design_table.columnCount()):
+                item = self.design_table.item(row, col)
+                if item:
+                    item.setBackground(QColor(0, 0, 0, 0))  # Transparent background
+    
+    def highlight_current_files(self):
+        # Reset previous highlights
+        self.reset_table_highlights()
+        
+        # Highlight current PSD file with subtle yellow
+        if self.current_psd_index >= 0 and self.current_psd_index < len(self.psd_files):
+            for col in range(self.file_table.columnCount()):
+                item = self.file_table.item(self.current_psd_index, col)
+                if item:
+                    item.setBackground(self.highlight_color)
+        
+        # Highlight current design file with subtle yellow
+        if self.current_design_index >= 0 and self.current_design_index < len(self.design_files):
+            for col in range(self.design_table.columnCount()):
+                item = self.design_table.item(self.current_design_index, col)
+                if item:
+                    item.setBackground(self.highlight_color)
+    
+    def process_rendering(self):
+        if not self.processing:
+            return
+            
+        self.render_timer.stop()
+        
+        # Move to next PSD or design file
+        if self.current_design_index < 0 or self.current_design_index >= len(self.design_files) - 1:
+            # Move to next PSD file
+            self.current_psd_index += 1
+            self.current_design_index = 0
+            
+            if self.current_psd_index >= len(self.psd_files):
+                # All files processed
+                self.rendering_complete()
+                return
+        else:
+            # Move to next design file for the same PSD
+            self.current_design_index += 1
+        
+        # Update UI highlights
+        self.highlight_current_files()
+        
+        # Get current files
+        psd_file = self.psd_files[self.current_psd_index]
+        design_file = self.design_files[self.current_design_index]
+        
+        # Check if this is the first design for this PSD
+        first_design = (self.current_design_index == 0)
+        # Check if this is the last design for this PSD
+        last_design = (self.current_design_index == len(self.design_files) - 1)
+        
+        # Calculate progress
+        self.completed_operations += 1
+        progress = int((self.completed_operations / self.total_operations) * 100)
+        
+        # Create and run JSX script for processing current files
+        self.run_photoshop_script(psd_file, design_file, first_design, last_design)
+        
+        # Update progress with current operation
+        status_msg = f"Memproses: {psd_file['name']} dengan desain: {design_file['name']}..."
+        self.update_progress(progress, status_msg)
+        
+        # Start polling for completion
+        self.status_timer.start()
+    
+    def run_photoshop_script(self, psd_file, design_file, first_design, last_design):
         try:
             ps_exe = self.find_photoshop()
             if not ps_exe:
-                QMessageBox.critical(self, "Error", "Photoshop tidak ditemukan.")
-                return
-                
-            # Konversi path dengan forward slash untuk ExtendScript
-            safe_path = path.replace("\\", "/")
+                raise Exception("Photoshop tidak ditemukan.")
             
-            # Dapatkan format output yang dipilih
+            # Get configuration data
+            source_path = self.path_input.text().strip()
+            design_path = self.design_dir_input.text().strip()
+            output_path = self.output_dir_input.text().strip()
+            smart_object_name = self.smart_object_input.text().strip()
             output_format = self.format_combo.currentText().lower()
             
-            # Pastikan direktori script ada
+            # Create status file to monitor progress
+            status_file = os.path.join(tempfile.gettempdir(), "mockup_render_status.json")
+            
+            # Reset status
+            with open(status_file, "w", encoding="utf-8") as f:
+                f.write('{"status":"running","message":"Starting process"}')
+            
+            # Build script path
             script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "script")
             os.makedirs(script_dir, exist_ok=True)
+            jsx_path = os.path.join(script_dir, "process_mockup.jsx")
             
-            # Buat script JSX untuk membuka path
-            jsx_path = os.path.join(script_dir, "open_psd.jsx")
+            # Convert paths for JSX
+            psd_path = psd_file["path"].replace("\\", "/")
+            design_path = design_file["path"].replace("\\", "/")
+            output_path = output_path.replace("\\", "/")
+            status_file = status_file.replace("\\", "/")
+            
+            # Generate folder name from PSD file name
+            psd_name = os.path.splitext(os.path.basename(psd_file["path"]))[0]
+            
+            # Create output subfolder based on PSD name
+            psd_output_dir = os.path.join(output_path, psd_name)
+            os.makedirs(psd_output_dir, exist_ok=True)
+            psd_output_dir = psd_output_dir.replace("\\", "/")
+            
+            # Get or initialize counter for this PSD file
+            if psd_name not in self.output_counters:
+                self.output_counters[psd_name] = 1
+            else:
+                if first_design:  # Reset counter when starting a new PSD
+                    self.output_counters[psd_name] = 1
+                
+            # Generate numbered output filename
+            current_number = self.output_counters[psd_name]
+            output_filename = f"{psd_name}_{current_number}.{output_format}"
+            output_file_path = os.path.join(psd_output_dir, output_filename).replace("\\", "/")
+            
+            # Increment the counter for the next file
+            self.output_counters[psd_name] += 1
+            
+            # Create the JSX script content with updated approach that doesn't use JSON
             jsx_code = f'''
-// Script untuk membuka file PSD di Photoshop
-var path = new Folder("{safe_path}");
-var files = path.getFiles("*.psd");
-var outputFormat = "{output_format}";
+#target photoshop
 
-if (files.length > 0) {{
-    for (var i = 0; i < files.length; i++) {{
-        app.open(files[i]);
-    }}
-    alert("Berhasil membuka " + files.length + " file PSD dari folder " + path + "\\nFormat output: " + outputFormat.toUpperCase());
-}} else {{
-    alert("Tidak ditemukan file PSD di folder " + path);
+// Configuration
+var psdPath = "{psd_path}";
+var designPath = "{design_path}";
+var smartObjectName = "{smart_object_name}";
+var outputPath = "{output_file_path}";
+var outputFormat = "{output_format}";
+var statusFile = "{status_file}";
+var firstDesign = {str(first_design).lower()};
+var lastDesign = {str(last_design).lower()};
+
+// Function to write status updates without using JSON
+function writeStatus(status, message) {{
+    var file = new File(statusFile);
+    file.encoding = "UTF-8";
+    file.open("w");
+    file.write('{{"status":"' + status + '","message":"' + message + '"}}');
+    file.close();
 }}
+
+function main() {{
+    try {{
+        writeStatus("running", "Membuka file PSD");
+        
+        // If this is the first design, open the PSD first
+        var doc;
+        if (firstDesign) {{
+            app.open(new File(psdPath));
+            doc = app.activeDocument;
+        }} else {{
+            doc = app.activeDocument;
+        }}
+        
+        writeStatus("running", "Mencari smart object");
+        
+        // Find the smart object layer by name
+        var targetLayer = null;
+        for (var i = 0; i < doc.layers.length; i++) {{
+            if (doc.layers[i].name == smartObjectName) {{
+                targetLayer = doc.layers[i];
+                break;
+            }}
+        }}
+        
+        if (!targetLayer) {{
+            writeStatus("error", "Smart object dengan nama '" + smartObjectName + "' tidak ditemukan");
+            return;
+        }}
+        
+        writeStatus("running", "Membuka dan mengganti konten smart object");
+        
+        // Select the layer and edit the smart object
+        doc.activeLayer = targetLayer;
+        
+        // Open smart object using placedLayerEditContents
+        var idPlcL = stringIDToTypeID("placedLayerEditContents");
+        executeAction(idPlcL, undefined, DialogModes.NO);
+        
+        // We're now inside the smart object
+        var smartObjectDoc = app.activeDocument;
+        
+        // Open design file
+        var designDoc = app.open(new File(designPath));
+        
+        // Copy content from design file
+        designDoc.selection.selectAll();
+        designDoc.selection.copy();
+        designDoc.close(SaveOptions.DONOTSAVECHANGES);
+        
+        // Paste into smart object
+        smartObjectDoc.paste();
+        
+        // Fit layer to document dimensions if needed
+        if (smartObjectDoc.layers.length > 0) {{
+            smartObjectDoc.activeLayer = smartObjectDoc.layers[0];
+            
+            // Resize placed design to fit the document
+            smartObjectDoc.activeLayer.resize(100, 100, AnchorPosition.MIDDLECENTER);
+        }}
+        
+        writeStatus("running", "Menyimpan perubahan smart object");
+        
+        // Save and close the smart object
+        smartObjectDoc.save();
+        smartObjectDoc.close(SaveOptions.DONOTSAVECHANGES);
+        
+        writeStatus("running", "Mengeksport ke " + outputFormat.toUpperCase());
+        
+        // Export the document to the specified format
+        exportDocument(doc, outputPath, outputFormat);
+        
+        // If this is the last design for this PSD, close the document without saving
+        if (lastDesign) {{
+            doc.close(SaveOptions.DONOTSAVECHANGES);
+        }}
+        
+        writeStatus("complete", "Rendering selesai");
+    }} catch (e) {{
+        writeStatus("error", "Error: " + e.toString());
+    }}
+}}
+
+function exportDocument(doc, outputPath, format) {{
+    var saveFile = new File(outputPath);
+    var saveOptions;
+    
+    if (format === 'jpg') {{
+        saveOptions = new JPEGSaveOptions();
+        saveOptions.embedColorProfile = true;
+        saveOptions.formatOptions = FormatOptions.STANDARDBASELINE;
+        saveOptions.matte = MatteType.NONE;
+        saveOptions.quality = 12; // Maximum quality
+    }} else {{
+        // Default to PNG
+        saveOptions = new PNGSaveOptions();
+        saveOptions.compression = 0; // No compression
+        saveOptions.interlaced = false;
+    }}
+    
+    doc.saveAs(saveFile, saveOptions, true, Extension.LOWERCASE);
+}}
+
+// Run the script
+main();
 '''
             
+            # Write script to file
             with open(jsx_path, "w", encoding="utf-8") as f:
                 f.write(jsx_code)
-                
-            # Simulasi progress untuk demo (tanpa fungsi nyata)
-            self.progress_label.setText("Memulai proses render...")
-            self.progress_bar.setValue(5)
-            QApplication.processEvents()
             
-            # Jalankan Photoshop tanpa menunggu output
-            subprocess.Popen([ps_exe, "-r", jsx_path], 
-                           shell=True, 
-                           stdout=subprocess.DEVNULL, 
-                           stderr=subprocess.DEVNULL)
+            # Run the script in Photoshop
+            self.ps_process = subprocess.Popen(
+                [ps_exe, "-r", jsx_path],
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
             
-            # Reset progress status setelah selesai
-            self.progress_bar.setValue(0)
-            self.progress_label.setText("Siap untuk memproses")
-            
-            # Tampilkan sukses tanpa memperhatikan exit code
-            QMessageBox.information(self, "Sukses", f"Perintah render mockup berhasil dikirim ke Photoshop.\nFormat output: {output_format.upper()}")
+            self.status_file = status_file
             
         except Exception as e:
-            self.progress_label.setText("Error dalam proses")
-            QMessageBox.critical(self, "Error", f"Gagal menjalankan Photoshop:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Gagal menjalankan proses: {str(e)}")
+            self.cancel_rendering()
+    
+    def check_process_status(self):
+        if not self.processing:
+            return
+            
+        try:
+            # Check if status file exists
+            if not os.path.exists(self.status_file):
+                return
+                
+            # Read status file
+            with open(self.status_file, "r", encoding="utf-8") as f:
+                status_text = f.read()
+            
+            # Parse JSON manually if needed
+            try:
+                status_data = json.loads(status_text)
+                status = status_data.get("status", "")
+                message = status_data.get("message", "")
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                if "complete" in status_text:
+                    status = "complete"
+                    message = "Rendering selesai"
+                elif "error" in status_text:
+                    status = "error"
+                    message = "Error dalam proses"
+                else:
+                    status = "running"
+                    message = "Proses berjalan"
+            
+            if status == "error":
+                # Error occurred
+                QMessageBox.critical(self, "Error", f"Error dalam proses: {message}")
+                self.cancel_rendering()
+                return
+                
+            if status == "complete":
+                # Current operation completed, move to next
+                self.status_timer.stop()
+                self.render_timer.start(500)  # Start next operation with delay
+                return
+                
+            # Update progress message with current status
+            self.progress_label.setText(message)
+            
+        except Exception as e:
+            # Error reading status
+            print(f"Error checking status: {str(e)}")
+    
+    def rendering_complete(self):
+        self.processing = False
+        self.status_timer.stop()
+        
+        # Reset UI
+        self.render_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        
+        # Update progress
+        self.update_progress(100, "Rendering selesai!")
+        
+        # Reset row highlights
+        self.reset_table_highlights()
+        
+        # Show completion message
+        QMessageBox.information(
+            self, 
+            "Sukses", 
+            f"Proses rendering selesai!\n\n"
+            f"Total mockup: {len(self.psd_files)}\n"
+            f"Total desain: {len(self.design_files)}\n"
+            f"Total file output: {self.total_operations}"
+        )
+    
+    def update_progress(self, value, message):
+        self.progress_bar.setValue(value)
+        self.progress_label.setText(message)
+        # Format the progress bar text
+        self.progress_bar.setFormat(f"{value}% - {message}")
+        QApplication.processEvents()
+    
+    def terminate_photoshop_script(self):
+        if hasattr(self, 'ps_process') and self.ps_process:
+            try:
+                self.ps_process.terminate()
+            except:
+                pass
 
     def find_photoshop(self):
         # Program Files locations
@@ -352,6 +775,12 @@ if (files.length > 0) {{
                 return path
                 
         return None
+    
+    def closeEvent(self, event):
+        # Stop timers and processes on window close
+        if self.processing:
+            self.cancel_rendering()
+        event.accept()
 
 
 if __name__ == "__main__":

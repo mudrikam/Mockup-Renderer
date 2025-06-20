@@ -1,30 +1,27 @@
-// This file is a template and will be overwritten dynamically by the application
-// when processing mockups with a specific PSD and design.
 
 #target photoshop
 
-// Configuration - will be filled dynamically by the Python app
+// Configuration
 var psdPath = "";
 var designPath = "";
 var smartObjectName = "";
 var outputPath = "";
 var outputFormat = "png";
 var statusFile = "";
-var firstDesign = true;
+var firstDesign = false;
 var lastDesign = false;
 
-// Function to write status updates without using JSON (fixed)
+// Simplified status writing without using JSON
 function writeStatus(status, message) {
     var file = new File(statusFile);
-    file.encoding = "UTF-8";
     file.open("w");
-    file.write('{"status":"' + status + '","message":"' + message + '"}');
+    file.write(status + ": " + message);
     file.close();
 }
 
 function main() {
     try {
-        writeStatus("running", "Membuka file PSD");
+        writeStatus("running", "Processing");
         
         // If this is the first design, open the PSD first
         var doc;
@@ -34,8 +31,6 @@ function main() {
         } else {
             doc = app.activeDocument;
         }
-        
-        writeStatus("running", "Mencari smart object");
         
         // Find the smart object layer by name
         var targetLayer = null;
@@ -47,23 +42,25 @@ function main() {
         }
         
         if (!targetLayer) {
-            writeStatus("error", "Smart object dengan nama '" + smartObjectName + "' tidak ditemukan");
+            writeStatus("error", "Smart object not found: " + smartObjectName);
             return;
         }
-        
-        writeStatus("running", "Membuka dan mengganti konten smart object");
         
         // Select the layer and edit the smart object
         doc.activeLayer = targetLayer;
         
-        // Open smart object using placedLayerEditContents (more reliable)
+        // Open the smart object using Edit Contents
         var idPlcL = stringIDToTypeID("placedLayerEditContents");
         executeAction(idPlcL, undefined, DialogModes.NO);
         
         // We're now inside the smart object
         var smartObjectDoc = app.activeDocument;
         
-        // Open the design file
+        // Remember smart object dimensions
+        var soWidth = smartObjectDoc.width;
+        var soHeight = smartObjectDoc.height;
+        
+        // Open design file
         var designDoc = app.open(new File(designPath));
         
         // Copy content from design file
@@ -71,22 +68,18 @@ function main() {
         designDoc.selection.copy();
         designDoc.close(SaveOptions.DONOTSAVECHANGES);
         
-        // Paste into smart object
+        // Place new design as a new layer on top (without trying to clear content)
         smartObjectDoc.paste();
         
-        // Fit layer to document dimensions if needed
-        if (smartObjectDoc.layers.length > 0) {
-            smartObjectDoc.activeLayer = smartObjectDoc.layers[0];
-            fitLayerToCanvas(smartObjectDoc.activeLayer);
-        }
+        // Get the pasted layer (should be the top layer)
+        var pastedLayer = smartObjectDoc.activeLayer;
         
-        writeStatus("running", "Menyimpan perubahan smart object");
+        // Fit the design proportionally
+        fitLayerProportionally(pastedLayer, soWidth, soHeight);
         
         // Save and close the smart object
         smartObjectDoc.save();
         smartObjectDoc.close(SaveOptions.DONOTSAVECHANGES);
-        
-        writeStatus("running", "Mengeksport ke " + outputFormat.toUpperCase());
         
         // Export the document to the specified format
         exportDocument(doc, outputPath, outputFormat);
@@ -96,23 +89,60 @@ function main() {
             doc.close(SaveOptions.DONOTSAVECHANGES);
         }
         
-        writeStatus("complete", "Rendering selesai");
+        writeStatus("complete", "Done");
     } catch (e) {
-        writeStatus("error", "Error: " + e.toString());
+        writeStatus("error", e.toString());
     }
 }
 
-// Helper function to fit layer to canvas
-function fitLayerToCanvas(layer) {
+// Function to fit layer proportionally to target dimensions
+function fitLayerProportionally(layer, targetWidth, targetHeight) {
     try {
-        var docWidth = app.activeDocument.width.value;
-        var docHeight = app.activeDocument.height.value;
-        
+        // Make sure the layer is selected
         app.activeDocument.activeLayer = layer;
-        app.activeDocument.activeLayer.resize(100, 100, AnchorPosition.MIDDLECENTER);
+        
+        // Get current dimensions
+        var bounds = layer.bounds;
+        var layerWidth = bounds[2] - bounds[0];
+        var layerHeight = bounds[3] - bounds[1];
+        
+        // Calculate scaling factors
+        var widthRatio = targetWidth / layerWidth;
+        var heightRatio = targetHeight / layerHeight;
+        
+        // Use the larger scaling factor to ensure the image covers the smart object
+        // This will maintain aspect ratio while ensuring one dimension fits exactly
+        var scaleFactor = Math.max(widthRatio, heightRatio) * 100;
+        
+        // Resize the layer
+        layer.resize(scaleFactor, scaleFactor, AnchorPosition.MIDDLECENTER);
+        
+        // Center the layer
+        centerLayer(layer);
     } catch (e) {
         // Silent error handling
     }
+}
+
+// Function to center a layer in the document
+function centerLayer(layer) {
+    var doc = app.activeDocument;
+    var bounds = layer.bounds;
+    var layerWidth = bounds[2] - bounds[0];
+    var layerHeight = bounds[3] - bounds[1];
+    
+    var docWidth = doc.width.value;
+    var docHeight = doc.height.value;
+    
+    var deltaX = (docWidth - layerWidth) / 2;
+    var deltaY = (docHeight - layerHeight) / 2;
+    
+    // Adjust for current position
+    deltaX = deltaX - bounds[0];
+    deltaY = deltaY - bounds[1];
+    
+    // Move the layer
+    layer.translate(deltaX, deltaY);
 }
 
 function exportDocument(doc, outputPath, format) {
@@ -128,15 +158,6 @@ function exportDocument(doc, outputPath, format) {
     } else {
         // Default to PNG
         saveOptions = new PNGSaveOptions();
-        saveOptions.compression = 0; // No compression
-        saveOptions.interlaced = false;
-    }
-    
-    doc.saveAs(saveFile, saveOptions, true, Extension.LOWERCASE);
-}
-
-// Run the script
-main();
         saveOptions.compression = 0; // No compression
         saveOptions.interlaced = false;
     }

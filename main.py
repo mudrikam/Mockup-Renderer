@@ -10,7 +10,6 @@ from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QColor
 import qtawesome as qta
 import datetime
-import json
 import tempfile
 
 class MockupRenderer(QWidget):
@@ -473,11 +472,11 @@ class MockupRenderer(QWidget):
             output_format = self.format_combo.currentText().lower()
             
             # Create status file to monitor progress
-            status_file = os.path.join(tempfile.gettempdir(), "mockup_render_status.json")
+            status_file = os.path.join(tempfile.gettempdir(), "mockup_render_status.txt")
             
             # Reset status
             with open(status_file, "w", encoding="utf-8") as f:
-                f.write('{"status":"running","message":"Starting process"}')
+                f.write("running: Starting process")
             
             # Build script path
             script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "script")
@@ -513,7 +512,7 @@ class MockupRenderer(QWidget):
             # Increment the counter for the next file
             self.output_counters[psd_name] += 1
             
-            # Create the JSX script content with updated approach that doesn't use JSON
+            # Create the JSX script with simplified status writing
             jsx_code = f'''
 #target photoshop
 
@@ -527,18 +526,17 @@ var statusFile = "{status_file}";
 var firstDesign = {str(first_design).lower()};
 var lastDesign = {str(last_design).lower()};
 
-// Function to write status updates without using JSON
+// Simplified status writing without using JSON
 function writeStatus(status, message) {{
     var file = new File(statusFile);
-    file.encoding = "UTF-8";
     file.open("w");
-    file.write('{{"status":"' + status + '","message":"' + message + '"}}');
+    file.write(status + ": " + message);
     file.close();
 }}
 
 function main() {{
     try {{
-        writeStatus("running", "Membuka file PSD");
+        writeStatus("running", "Processing");
         
         // If this is the first design, open the PSD first
         var doc;
@@ -548,8 +546,6 @@ function main() {{
         }} else {{
             doc = app.activeDocument;
         }}
-        
-        writeStatus("running", "Mencari smart object");
         
         // Find the smart object layer by name
         var targetLayer = null;
@@ -561,21 +557,23 @@ function main() {{
         }}
         
         if (!targetLayer) {{
-            writeStatus("error", "Smart object dengan nama '" + smartObjectName + "' tidak ditemukan");
+            writeStatus("error", "Smart object not found: " + smartObjectName);
             return;
         }}
-        
-        writeStatus("running", "Membuka dan mengganti konten smart object");
         
         // Select the layer and edit the smart object
         doc.activeLayer = targetLayer;
         
-        // Open smart object using placedLayerEditContents
+        // Open the smart object using Edit Contents
         var idPlcL = stringIDToTypeID("placedLayerEditContents");
         executeAction(idPlcL, undefined, DialogModes.NO);
         
         // We're now inside the smart object
         var smartObjectDoc = app.activeDocument;
+        
+        // Remember smart object dimensions
+        var soWidth = smartObjectDoc.width;
+        var soHeight = smartObjectDoc.height;
         
         // Open design file
         var designDoc = app.open(new File(designPath));
@@ -585,24 +583,18 @@ function main() {{
         designDoc.selection.copy();
         designDoc.close(SaveOptions.DONOTSAVECHANGES);
         
-        // Paste into smart object
+        // Place new design as a new layer on top (without trying to clear content)
         smartObjectDoc.paste();
         
-        // Fit layer to document dimensions if needed
-        if (smartObjectDoc.layers.length > 0) {{
-            smartObjectDoc.activeLayer = smartObjectDoc.layers[0];
-            
-            // Resize placed design to fit the document
-            smartObjectDoc.activeLayer.resize(100, 100, AnchorPosition.MIDDLECENTER);
-        }}
+        // Get the pasted layer (should be the top layer)
+        var pastedLayer = smartObjectDoc.activeLayer;
         
-        writeStatus("running", "Menyimpan perubahan smart object");
+        // Fit the design proportionally
+        fitLayerProportionally(pastedLayer, soWidth, soHeight);
         
         // Save and close the smart object
         smartObjectDoc.save();
         smartObjectDoc.close(SaveOptions.DONOTSAVECHANGES);
-        
-        writeStatus("running", "Mengeksport ke " + outputFormat.toUpperCase());
         
         // Export the document to the specified format
         exportDocument(doc, outputPath, outputFormat);
@@ -612,10 +604,60 @@ function main() {{
             doc.close(SaveOptions.DONOTSAVECHANGES);
         }}
         
-        writeStatus("complete", "Rendering selesai");
+        writeStatus("complete", "Done");
     }} catch (e) {{
-        writeStatus("error", "Error: " + e.toString());
+        writeStatus("error", e.toString());
     }}
+}}
+
+// Function to fit layer proportionally to target dimensions
+function fitLayerProportionally(layer, targetWidth, targetHeight) {{
+    try {{
+        // Make sure the layer is selected
+        app.activeDocument.activeLayer = layer;
+        
+        // Get current dimensions
+        var bounds = layer.bounds;
+        var layerWidth = bounds[2] - bounds[0];
+        var layerHeight = bounds[3] - bounds[1];
+        
+        // Calculate scaling factors
+        var widthRatio = targetWidth / layerWidth;
+        var heightRatio = targetHeight / layerHeight;
+        
+        // Use the larger scaling factor to ensure the image covers the smart object
+        // This will maintain aspect ratio while ensuring one dimension fits exactly
+        var scaleFactor = Math.max(widthRatio, heightRatio) * 100;
+        
+        // Resize the layer
+        layer.resize(scaleFactor, scaleFactor, AnchorPosition.MIDDLECENTER);
+        
+        // Center the layer
+        centerLayer(layer);
+    }} catch (e) {{
+        // Silent error handling
+    }}
+}}
+
+// Function to center a layer in the document
+function centerLayer(layer) {{
+    var doc = app.activeDocument;
+    var bounds = layer.bounds;
+    var layerWidth = bounds[2] - bounds[0];
+    var layerHeight = bounds[3] - bounds[1];
+    
+    var docWidth = doc.width.value;
+    var docHeight = doc.height.value;
+    
+    var deltaX = (docWidth - layerWidth) / 2;
+    var deltaY = (docHeight - layerHeight) / 2;
+    
+    // Adjust for current position
+    deltaX = deltaX - bounds[0];
+    deltaY = deltaY - bounds[1];
+    
+    // Move the layer
+    layer.translate(deltaX, deltaY);
 }}
 
 function exportDocument(doc, outputPath, format) {{
@@ -669,26 +711,14 @@ main();
             if not os.path.exists(self.status_file):
                 return
                 
-            # Read status file
+            # Read status file with simplified format
             with open(self.status_file, "r", encoding="utf-8") as f:
-                status_text = f.read()
+                status_text = f.read().strip()
             
-            # Parse JSON manually if needed
-            try:
-                status_data = json.loads(status_text)
-                status = status_data.get("status", "")
-                message = status_data.get("message", "")
-            except json.JSONDecodeError:
-                # Fallback if JSON parsing fails
-                if "complete" in status_text:
-                    status = "complete"
-                    message = "Rendering selesai"
-                elif "error" in status_text:
-                    status = "error"
-                    message = "Error dalam proses"
-                else:
-                    status = "running"
-                    message = "Proses berjalan"
+            # Simple text parsing - format is "status: message"
+            parts = status_text.split(":", 1)
+            status = parts[0].strip() if len(parts) > 0 else ""
+            message = parts[1].strip() if len(parts) > 1 else ""
             
             if status == "error":
                 # Error occurred
@@ -703,11 +733,11 @@ main();
                 return
                 
             # Update progress message with current status
-            self.progress_label.setText(message)
+            self.progress_label.setText(message if message else "Memproses...")
             
         except Exception as e:
-            # Error reading status
-            print(f"Error checking status: {str(e)}")
+            # Silently handle errors to prevent disruption
+            pass
     
     def rendering_complete(self):
         self.processing = False

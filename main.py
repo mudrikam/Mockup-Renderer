@@ -5,9 +5,10 @@ import time
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QFileDialog, QMessageBox, QLabel, 
                              QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-                             QGroupBox, QFormLayout, QProgressBar, QSplitter, QComboBox)
+                             QGroupBox, QFormLayout, QProgressBar, QSplitter, QComboBox,
+                             QSizePolicy)
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon
 import qtawesome as qta
 import datetime
 import tempfile
@@ -18,6 +19,11 @@ class MockupRenderer(QWidget):
         self.setWindowTitle("Mockup Renderer")
         self.resize(1200, 650)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        
+        # Set window icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mckprdr.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         self.processing = False
         self.current_psd_index = -1
@@ -92,9 +98,9 @@ class MockupRenderer(QWidget):
         
         path_group.setLayout(path_form)
         main_layout.addWidget(path_group)
-        
-        # Area untuk dua tabel berdampingan dengan splitter
+          # Area untuk dua tabel berdampingan dengan splitter
         tables_splitter = QSplitter(Qt.Horizontal)
+        tables_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # Wadah untuk tabel mockup dan labelnya
         mockup_container = QWidget()
@@ -142,22 +148,20 @@ class MockupRenderer(QWidget):
         tables_splitter.addWidget(design_container)
         tables_splitter.setSizes([600, 600])  # Ukuran awal yang sama
         
-        main_layout.addWidget(tables_splitter)
+        main_layout.addWidget(tables_splitter, stretch=1)
         
         # Progress Bar
         progress_group = QGroupBox("Status Proses")
         progress_layout = QVBoxLayout()
-        
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%v% - %p%")
         progress_layout.addWidget(self.progress_bar)
-        
         self.progress_label = QLabel("Siap untuk memproses")
         progress_layout.addWidget(self.progress_label)
-        
         progress_group.setLayout(progress_layout)
+        progress_group.setFixedHeight(80)
         main_layout.addWidget(progress_group)
         
         # Tombol render mockup
@@ -814,10 +818,24 @@ main();
 
 
 if __name__ == "__main__":
+    # Set AppID for Windows Taskbar icon
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            myappid = "mudrikam.mockuprenderer.app.1.0"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+            
     app = QApplication(sys.argv)
     
     # Set aplikasi style
     app.setStyle("Fusion")
+    
+    # Set application icon for taskbar
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mckprdr.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     window = MockupRenderer()
     window.show()

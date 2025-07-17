@@ -15,20 +15,57 @@ Aplikasi PySide6 canggih untuk batch rendering mockup PSD dengan mengganti smart
 
 ## Kebutuhan
 
-- Python 3.8+
+- Python 3.8+ (disarankan Python 3.12)
 - PySide6
 - qtawesome
-- Adobe Photoshop (versi terbaru)
+- Adobe Photoshop (versi terbaru, Windows)
+
+## Cara Install
+
+1. **Install Python**
+   - Download dan install Python dari [python.org](https://www.python.org/downloads/).
+   - Pastikan saat instalasi, opsi "Add Python to PATH" dicentang.
+
+2. **Download Source Code**
+   - Download atau clone repository ini ke komputer Anda.
+
+3. **Buka Command Prompt / Terminal**
+   - Arahkan ke folder project hasil ekstrak/clone.
+
+4. **Install Dependency**
+   Jalankan perintah berikut:
+   ```
+   pip install PySide6 qtawesome
+   ```
+
+5. **Pastikan Photoshop Terinstal**
+   - Aplikasi ini membutuhkan Adobe Photoshop yang sudah terinstal di Windows.
+
+## Cara Penggunaan
+
+1. Jalankan aplikasi:
+   - Klik dua kali `Launcher.bat` (jika tersedia), atau
+   - Jalankan di terminal:
+     ```
+     python main.py
+     ```
+
+2. Isi semua pengaturan pada aplikasi:
+   - **Folder Sumber PSD:** Pilih folder berisi file mockup PSD.
+   - **Folder Desain:** Pilih folder berisi file desain (PNG, JPG, PSD, dsb).
+   - **Target Smart Object:** Masukkan nama layer smart object yang ingin diganti (harus sama persis dengan di PSD).
+   - **Folder Output:** Pilih folder untuk menyimpan hasil render.
+   - **Format Output:** Pilih PNG atau JPG.
+   - **Lokasi Photoshop.exe:** Akan terisi otomatis jika terdeteksi. Jika tidak, klik tombol folder di kanan dan pilih file `Photoshop.exe` secara manual.
+
+3. Klik **Render Mockup** untuk memulai proses batch.
+
+4. Progress bar dan status akan tampil selama proses berjalan. Anda bisa membatalkan proses kapan saja dengan tombol **Batal**.
 
 ## Cara Kerja
 
 1. **Pilih Folder dan Pengaturan**
-   - Pilih folder berisi file mockup PSD.
-   - Pilih folder berisi file desain (PNG, JPG, PSD, dll).
-   - Masukkan nama layer smart object di PSD yang ingin diganti.
-   - Pilih folder output untuk hasil render.
-   - Pilih format output (PNG atau JPG).
-   - Aplikasi akan mencoba mendeteksi path Photoshop.exe secara otomatis. Jika gagal, Anda bisa pilih manual.
+   - Pilih folder mockup PSD, folder desain, nama smart object, folder output, format output, dan path Photoshop.exe.
 
 2. **Proses Batch Rendering**
    - Untuk setiap file mockup PSD:
@@ -46,18 +83,6 @@ Aplikasi PySide6 canggih untuk batch rendering mockup PSD dengan mengganti smart
 4. **Struktur Output**
    - Folder output berisi subfolder untuk setiap mockup PSD.
    - Setiap subfolder berisi gambar hasil ekspor, dinamai dengan nama PSD dan nomor urut (misal: `mockup1_1.png`, `mockup1_2.png`, ...).
-
-## Cara Penggunaan
-
-1. Jalankan `Launcher.bat` atau `python main.py`
-2. Atur path folder:
-   - Folder Sumber: Folder berisi file mockup PSD
-   - Folder Desain: Folder berisi file desain yang akan diterapkan
-   - Smart Object: Nama layer smart object yang akan diganti di mockup
-   - Folder Output: Folder untuk menyimpan hasil ekspor
-   - Photoshop.exe: Path ke Photoshop (otomatis terdeteksi atau pilih manual)
-3. Pilih format output (PNG atau JPG)
-4. Klik "Render Mockup" untuk memulai proses batch
 
 ## Struktur Output
 
@@ -90,6 +115,7 @@ output/
 - Pastikan Photoshop sudah terinstal dan path Photoshop.exe benar.
 - Nama layer smart object harus persis sama dengan di file PSD Anda.
 - Aplikasi tidak mengubah file PSD atau desain asli Anda.
+- Jika Photoshop tidak terdeteksi otomatis, pilih manual file `Photoshop.exe` (biasanya di `C:\Program Files\Adobe\Adobe Photoshop <versi>\Photoshop.exe`).
 
 ---
 

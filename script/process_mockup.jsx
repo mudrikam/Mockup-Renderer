@@ -2,12 +2,12 @@
 #target photoshop
 
 // Configuration
-var psdPath = "";
-var designPath = "";
-var smartObjectName = "";
-var outputPath = "";
+var psdPath = "K:/UPWORK/Fabric/Scarf/2025/Juni/16/Scarf_Mockup_Set_5_Pamela_Thrush/IMG/PSD/Square/square/no 5/Scarf_Mockup_Set_5_Pamela_Thrush_set_5 square.psd";
+var designPath = "K:/UPWORK/Fabric/Scarf/2025/Juni/16/Scarf_Mockup_Set_5_Pamela_Thrush/Render/output/Scarf_Mockup_Set_5_Pamela_Thrush_set_5 square/Scarf_Mockup_Set_5_Pamela_Thrush_set_5 square_12.png";
+var smartObjectName = "Design Here (Double Click)";
+var outputPath = "K:/UPWORK/Fabric/Scarf/2025/Juni/16/Scarf_Mockup_Set_5_Pamela_Thrush/Render/output/Scarf_Mockup_Set_5_Pamela_Thrush_set_5 square/bg/Scarf_Mockup_Set_5_Pamela_Thrush_set_5 square/Scarf_Mockup_Set_5_Pamela_Thrush_set_5 square_4.png";
 var outputFormat = "png";
-var statusFile = "";
+var statusFile = "C:/Users/mudri/AppData/Local/Temp/mockup_render_status.txt";
 var firstDesign = false;
 var lastDesign = false;
 

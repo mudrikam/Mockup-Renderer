@@ -56,7 +56,7 @@ class MockupRenderer(QWidget):
         self.browse_button.clicked.connect(self.browse_directory)
         source_path_layout.addWidget(self.browse_button)
         
-        path_form.addRow("Folder Sumber:", source_path_layout)
+        path_form.addRow("Folder Sumber PSD:", source_path_layout)
         
         # 2. Design Directory
         design_dir_layout = QHBoxLayout()

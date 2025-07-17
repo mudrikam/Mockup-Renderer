@@ -30,6 +30,7 @@ class MockupRenderer(QWidget):
         self.current_design_index = -1
         self.psd_files = []
         self.design_files = []
+        self.ps_exe_path = None
         
         self.setup_ui()
         
@@ -95,7 +96,28 @@ class MockupRenderer(QWidget):
         self.format_combo.addItems(["PNG", "JPG"])
         self.format_combo.setToolTip("Pilih format file output")
         path_form.addRow("Format Output:", self.format_combo)
-        
+
+        # Photoshop EXE path row
+        ps_exe_layout = QHBoxLayout()
+        self.ps_exe_input = QLineEdit()
+        self.ps_exe_input.setPlaceholderText("Path Photoshop.exe")
+        self.ps_exe_input.setReadOnly(False)
+        ps_exe_layout.addWidget(self.ps_exe_input)
+        self.ps_exe_browse = QPushButton(browse_icon, "")
+        self.ps_exe_browse.setToolTip("Pilih Photoshop.exe secara manual")
+        self.ps_exe_browse.clicked.connect(self.browse_photoshop_exe)
+        ps_exe_layout.addWidget(self.ps_exe_browse)
+        path_form.addRow("Lokasi Photoshop.exe:", ps_exe_layout)
+
+        # Deteksi otomatis path Photoshop saat UI dibuat
+        detected_ps = self.find_photoshop()
+        if detected_ps:
+            self.ps_exe_input.setText(detected_ps)
+            self.ps_exe_path = detected_ps
+        else:
+            self.ps_exe_input.setText("")
+            self.ps_exe_path = None
+
         path_group.setLayout(path_form)
         main_layout.addWidget(path_group)
           # Area untuk dua tabel berdampingan dengan splitter
@@ -211,7 +233,13 @@ class MockupRenderer(QWidget):
         directory = QFileDialog.getExistingDirectory(self, "Pilih Folder Desain")
         if directory:
             self.design_dir_input.setText(directory)
-    
+
+    def browse_photoshop_exe(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Pilih Photoshop.exe", "", "Photoshop.exe (*.exe)")
+        if file_path:
+            self.ps_exe_input.setText(file_path)
+            self.ps_exe_path = file_path
+
     def update_design_table(self):
         path = self.design_dir_input.text().strip()
         self.design_table.setRowCount(0)
@@ -330,6 +358,13 @@ class MockupRenderer(QWidget):
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Gagal membuat folder output: {str(e)}")
                 return False
+
+        # Pastikan path Photoshop EXE valid
+        ps_exe = self.ps_exe_input.text().strip()
+        if not ps_exe or not os.path.exists(ps_exe):
+            QMessageBox.warning(self, "Peringatan", "Path Photoshop.exe tidak valid atau tidak ditemukan.")
+            return False
+        self.ps_exe_path = ps_exe
                 
         return True
     
@@ -464,8 +499,8 @@ class MockupRenderer(QWidget):
     
     def run_photoshop_script(self, psd_file, design_file, first_design, last_design):
         try:
-            ps_exe = self.find_photoshop()
-            if not ps_exe:
+            ps_exe = self.ps_exe_input.text().strip()
+            if not ps_exe or not os.path.exists(ps_exe):
                 raise Exception("Photoshop tidak ditemukan.")
             
             # Get configuration data
